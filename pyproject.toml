@@ -1,0 +1,10 @@
+[project]
+name = "convi-lab"
+version = "0.1.0"
+description = "Data conversion/normalization in a nutshell"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "logger-lab>=0.1.1",
+    "rapidfuzz>=3.0.0",
+]
