@@ -1,70 +1,48 @@
 """
-convert_clock_format.py — Normalise any HH:MM[AM|PM] string to a 24-hour datetime.
+convert_clock_format.py: read an HH:MM[AM|PM] string as a 24-hour time.
 """
 
-from logger_lab import lab
-from typing import Optional
 from datetime import datetime
 
-from convi_lab.conversion_kernel.errors import ClockFormatError
+from convi_lab.kernel.errors import ClockFormatError
 
-logger = (
-    lab()
-    .with_profile("INVESTIGATOR")
-    .with_level("ERROR")
-    .build(__name__)
-)
 
-# RUN CONVERT FORMAT
-
-# Convert 12-hour to 24-hour format
-def convert_to_24_format(time: str, am_pm: Optional[str] = None) -> datetime:
+def convert_to_24_format(time: str, am_pm: str | None = None) -> datetime:
     """
-    Parse a time string into a ``datetime`` object, normalising to 24-hour time.
+    Parse a time string into a ``datetime`` object, normalizing to 24-hour time.
 
-    When *am_pm* is provided the input is treated as 12-hour clock; otherwise
-    it is assumed to already be in 24-hour format.
+    When *am_pm* is provided the input is treated as 12-hour clock. Otherwise
+    it is assumed to already be in 24-hour format. The 12-hour clock is
+    converted with arithmetic, never with the locale's AM/PM names, so the
+    result is the same in every locale.
 
-    Examples:
-        convert_to_24_format("14:30")          # → datetime(... 14, 30)
-        convert_to_24_format("02:30", "PM")    # → datetime(... 14, 30)
-        convert_to_24_format("12:00", "AM")    # → datetime(... 0, 0)
     Args:
         time: Time in ``HH:MM`` format, no spaces (e.g. ``"02:30"``).
-        am_pm: Optional AM/PM suffix — case-insensitive
-            (``"AM"``, ``"pm"``, ``"Pm"`` …).  Pass ``None`` for 24-hour input.
+        am_pm: Optional AM/PM suffix, case-insensitive
+            (``"AM"``, ``"pm"``, ``"Pm"`` …). Pass ``None`` for 24-hour input.
     Returns:
         ``datetime`` object carrying only the parsed time component.
     Raises:
-        ClockFormatError:
-            If the string cannot be parsed under the chosen format.
+        `ClockFormatError`: when the string cannot be parsed under the chosen format.
+    Example::
+        convert_to_24_format(time="14:30")               # datetime(1900, 1, 1, 14, 30)
+        convert_to_24_format(time="02:30", am_pm="PM")   # datetime(1900, 1, 1, 14, 30)
+        convert_to_24_format(time="12:00", am_pm="AM")   # datetime(1900, 1, 1, 0, 0)
     """
 
-    if am_pm:
-        # 12-hour format conversion
-        am_pm = am_pm.upper()
-        try:
-            return datetime.strptime(f"{time}{am_pm}", "%I:%M%p")
+    # %H and %M are digits only, so this read never depends on the locale
+    try:
+        parsed = datetime.strptime(time, "%H:%M")
 
-        except ValueError:
-            logger.error(f"Failed to parse 12-hour time: {time}{am_pm}")
-            raise ClockFormatError(time, am_pm)
+    except ValueError as err:
+        raise ClockFormatError(time=time, am_pm=am_pm) from err
 
-    else:
-        # 24-hour format
-        try:
-            return datetime.strptime(time, "%H:%M")
+    if not am_pm:
+        return parsed
 
-        except ValueError:
-            logger.error(f"Failed to parse 24-hour time: {time}")
-            raise ClockFormatError(time, None)
+    # 12-hour clock: hours 1 to 12, then AM keeps them (12 becomes 0) and PM adds 12
+    suffix = am_pm.upper()
+    if suffix not in ("AM", "PM") or not 1 <= parsed.hour <= 12:
+        raise ClockFormatError(time=time, am_pm=am_pm)
 
-
-# Example usage and test case
-def test_case():
-    logger.debug(convert_to_24_format('12:36', 'AM'))
-
-
-if __name__ == '__main__':
-    # TEST
-    test_case()
+    return parsed.replace(hour=parsed.hour % 12 + (12 if suffix == "PM" else 0))

@@ -1,4 +1,6 @@
-""" DATA CONVERSION HANDLERS """
+"""
+The conversions: the ``convert_date_time`` entry point, and the clock and name conversions it builds on.
+"""
 
 from .convert_clock_format import convert_to_24_format
 from .convert_name import convert_name

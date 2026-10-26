@@ -1,22 +1,20 @@
+"""
+parse_day_time.py: parses a day name and a time, like "Tuesday 12:30" or "Today 14:30".
+"""
+
 import re
 
-from logger_lab import lab
 from datetime import datetime, timedelta
 
-from convi_lab.conversion_kernel.errors import DayResolutionError
 from convi_lab.conversions.convert_name import convert_name
-from convi_lab.conversion_kernel.utils import match_pattern, parser_handler
-from convi_lab.conversion_kernel.constants import DAYS, RELATIVE_DAYS, WEEKDAY_MAP
+from convi_lab.parsers.parser_handler import parser_handler
+from convi_lab.kernel.constants import DAYS, WEEKDAY_MAP
+from convi_lab.kernel.logging_config import build_logger
 
-logger = (
-    lab()
-    .with_profile("INVESTIGATOR")
-    .with_level("ERROR")
-    .build(__name__)
-)
+logger = build_logger(__name__)
 
-# Weekday : a day in the current (Wednesday, Thursday, Friday)
-def _parse_weekday(day: str) -> datetime:
+
+def next_weekday(day: str, today: datetime) -> datetime:
     """
     Resolve a full weekday name to the **next** occurrence of that weekday.
 
@@ -24,123 +22,71 @@ def _parse_weekday(day: str) -> datetime:
     return value is always strictly in the future.
 
     Args:
-        day:   Full weekday name, e.g. ``"Monday"`` (must be in ``WEEKDAY_MAP``).
+        day: Full weekday name, e.g. ``"Monday"`` (a key of ``WEEKDAY_MAP``).
+        today: The moment to count from.
     Returns:
-        ``date_object`` for the next occurrence of *day*.
-    Raises:
-        DayResolutionError:
-            If *day* is not in ``WEEKDAY_MAP``.
+        A ``datetime`` on the next occurrence of *day*.
     """
 
-    if day not in WEEKDAY_MAP:
-        raise DayResolutionError(day)
-
-    current_datetime = datetime.now()
-    current_weekday = current_datetime.weekday()
-    target_weekday = WEEKDAY_MAP[day]
-
     # Calculate days ahead (always next occurrence, min 1 day)
-    days_ahead = (target_weekday - current_weekday + 7) % 7
+    days_ahead = (WEEKDAY_MAP[day] - today.weekday() + 7) % 7
 
     if days_ahead == 0:
         days_ahead = 7  # Always push to the *next* occurrence
 
-    return current_datetime + timedelta(days=days_ahead)
+    return today + timedelta(days=days_ahead)
 
 
-# Relative time: the time Today or Tomorrow
-def _parse_relative(day: str) -> datetime:
+def relative_day(day: str, today: datetime) -> datetime:
     """
-    Resolve ``"Today"`` or ``"Tomorrow"`` to a concrete ``date_object``.
+    Resolve ``"Today"`` or ``"Tomorrow"`` to a concrete date.
 
     Args:
-        day:   ``"Today"`` or ``"Tomorrow"``.
+        day: ``"Today"`` or ``"Tomorrow"``.
+        today: The moment to count from.
     Returns:
-        ``date_object`` for the given relative day.
-    Raises:
-        DayResolutionError:
-            If *day* is neither ``"Today"`` nor ``"Tomorrow"``.
+        A ``datetime`` on the given relative day.
     """
 
-    if day == "Today":
-        return datetime.now()
-
-    elif day == "Tomorrow":
-        return datetime.now() + timedelta(days=1)
-
-    else:
-        raise DayResolutionError(day)
+    return today if day == "Today" else today + timedelta(days=1)
 
 
-# Day time pattern:  "Mon12:30", "Monday01:15PM", "Tomorrow22:00", "Today06:30AM"
-def parse_day_time(match: re.Match) -> datetime:
+def parse_day_time(match: re.Match, today: datetime | None = None) -> datetime:
     """
     Convert a regex match from the ``day_time`` pattern into a ``datetime``.
 
     Match groups (in order):
-    1. ``day``    — day identifier, abbreviated or full
-                    (e.g. ``"Mon"``, ``"Monday"``, ``"Today"``, ``"Tomorrow"``)
-    2. ``time``   — ``HH:MM`` string
-    3. ``am_pm``  — ``"AM"`` / ``"PM"`` / ``None``
+    1. ``day``: day name or short form, any case
+       (e.g. ``"Mon"``, ``"Tues"``, ``"monday"``, ``"Today"``, ``"Tomorrow"``)
+    2. ``time``: ``HH:MM`` string
+    3. ``am_pm``: ``"AM"`` / ``"PM"`` / ``None``
 
-    Abbreviated names (``"Mon"``, ``"Tue"`` …) are expanded to their full
-    forms via fuzzy matching before dispatch.
+    Short forms are expanded to their full names via fuzzy matching. The
+    pattern only admits real spellings, so the match is exact.
 
-    Examples:
-        "Monday12:30PM" -> Next Monday at 12:30 PM
-        "Tue14:30" -> Next Tuesday at 14:30 (2:30 PM)
-        "Today09:00am" -> Today at 09:00 AM
-        "Tomorrow15:45" -> Tomorrow at 15:45 (3:45 PM)
     Args:
         match: ``re.Match`` produced by ``TIME_PATTERNS["day_time"]``.
+        today: The moment to treat as now. ``None`` reads the clock once.
     Returns:
         ``datetime`` for the resolved day and time.
     Raises:
-        DayResolutionError:
-            If the day identifier cannot be resolved.
-        ClockFormatError:
-            If the time string cannot be parsed.
+        `ClockFormatError`: when the time string cannot be parsed.
+    Example::
+        # Today is Wednesday 2026-05-13
+        parse_day_time(TIME_PATTERNS["day_time"].match("Monday12:30PM"))   # datetime(2026, 5, 18, 12, 30)
+        parse_day_time(TIME_PATTERNS["day_time"].match("Today09:00am"))    # datetime(2026, 5, 13, 9, 0)
     """
 
     day_str, time_str, am_pm = match.groups()
-    logger.debug(f'Day: {day_str}, Time: {time_str}, AM/PM: {am_pm}')
+    logger.debug("Day: %s, Time: %s, AM/PM: %s", day_str, time_str, am_pm)
+
+    today = today if today is not None else datetime.now()
 
     # Parse day (handles short forms and standard forms: Wed to Wednesday)
-    _day = convert_name(day_str, DAYS)
+    day = convert_name(name=day_str, reference=DAYS)
+    date_object = next_weekday(day, today) if day in WEEKDAY_MAP else relative_day(day, today)
 
-    if _day in RELATIVE_DAYS:
-        return parser_handler(
-            date_object=_parse_relative(_day),
-            time_str=time_str, am_pm=am_pm
-        )
-
-    elif _day in WEEKDAY_MAP:
-        return parser_handler(
-            date_object=_parse_weekday(_day),
-            time_str=time_str, am_pm=am_pm
-        )
-
-    else:
-        raise DayResolutionError(day_str)
-
-
-# Example usage and test case
-def _test_case():
-    """ Tests processing of the day patterns. """
-
-    test_cases = ["Mon12:30", "Monday01:15PM", "Tomorrow22:00", "Today06:30AM"]
-
-    for case in test_cases:
-        try:
-            logger.debug(
-                f"Input: {case}, Output: {parse_day_time(match_pattern('day_time', case))}"
-            )
-
-        except (ValueError, KeyError, AttributeError):
-
-            continue
-
-
-if __name__ == '__main__':
-    # TEST
-    _test_case()
+    return parser_handler(
+        day=date_object.day, month=date_object.month, year=date_object.year,
+        time_str=time_str, am_pm=am_pm, today=today,
+    )

@@ -1,67 +1,58 @@
 """
-convert_name.py — Fuzzy name matching against a reference list via rapidfuzz.
+convert_name.py: fuzzy name matching against a reference list, with rapidfuzz.
 """
 
-from logger_lab import lab
+from collections.abc import Collection, Iterable
+
 from rapidfuzz import process, utils
 
-from convi_lab.conversion_kernel.errors import FuzzyMatchError
+from convi_lab.kernel.errors import FuzzyMatchError, InvalidReferenceError
 
-logger = (
-    lab()
-    .with_profile("INVESTIGATOR")
-    .with_level("ERROR")
-    .build(__name__)
-)
 
-# Function to match fuzzy names
-def convert_name(name: str, reference: iter) -> str:
+def convert_name(name: str, reference: Iterable[str], score_cutoff: float | None = None) -> str:
     """
     Return the closest match for *name* within *reference* using fuzzy matching.
 
     Uses rapidfuzz's ``extractOne()`` with its default scorer (WRatio) and the
-    built-in ``default_process`` pre-processor (lowercases, strips punctuation).
+    built-in ``default_process`` preprocessor (lowercases, strips punctuation).
 
-    Examples:
-        convert_name("Mon",  DAYS)     # → "Monday"
-        convert_name("Jul",  MONTHS)   # → "July"
-        convert_name("Nets", TEAMS)    # → "Brooklyn Nets"
+    Note: by default there is no score cutoff. A non-empty *reference* always
+    returns its best entry, even when nothing in it is close. Pass
+    *score_cutoff* to make a poor match raise instead.
+
     Args:
         name: Input string to match (e.g. ``"Mon"``, ``"A. Hawks"``).
-        reference: List of canonical strings to match against
-                      (e.g. full day names, team names).
+        reference: The canonical strings to match against, in any iterable
+            (e.g. a list of day names or team names, a generator).
+        score_cutoff: The lowest score (0 to 100) that counts as a match, or
+            ``None`` for no cutoff.
     Returns:
-        The best-matching string from *reference*, or ``""`` on failure.
+        The best-matching string from *reference*.
+    Raises:
+        `InvalidReferenceError`: when *reference* is a single string, or can't be iterated.
+        `FuzzyMatchError`: when *reference* is empty, nothing reaches *score_cutoff*, or rapidfuzz raises.
+    Example::
+        convert_name(name="Mon", reference=DAYS)     # "Monday"
+        convert_name(name="Jul", reference=MONTHS)   # "July"
+        convert_name(name="Nets", reference=TEAMS)   # "Brooklyn Nets"
+        convert_name(name="zzz", reference=DAYS, score_cutoff=80)   # raises FuzzyMatchError
     """
 
+    # Validate once. A string is one name, not a list of names (iterating it would match letters)
+    if isinstance(reference, str) or not isinstance(reference, Iterable):
+        raise InvalidReferenceError(reference)
+
+    # A one-pass iterable (a generator) is read into a list, so it can be counted
+    choices: Collection[str] = reference if isinstance(reference, Collection) else list(reference)
+
     try:
-        result = process.extractOne(name, reference, processor=utils.default_process)
+        result = process.extractOne(name, choices, processor=utils.default_process, score_cutoff=score_cutoff)
 
     except Exception as e:
-        logger.error(f"rapidfuzz raised for {name!r}: {e}", exc_info=True)
-        raise FuzzyMatchError(name, len(reference)) from e
+        raise FuzzyMatchError(name=name, ref_count=len(choices)) from e
 
     if result is None:
-        logger.error(f"No fuzzy match for {name!r} in {len(reference)}-item reference")
-        raise FuzzyMatchError(name, len(reference))
+        raise FuzzyMatchError(name=name, ref_count=len(choices))
 
-    match, _score, _idx = result
+    match, _score, _idx = result  # Only the match is used; the score and index are not
     return match
-
-
-# Example usage and test case
-def test_case():
-    """Input a name and list to return best match"""
-
-    _list = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
-             "Atlanta Hawks", "Boston Celtics", "Brooklyn Nets", "Charlotte Hornets"]
-
-    _inputs = ['Mon', 'Nets', 'A. Hawks', 'Fri']
-
-    for _input in _inputs:
-        logger.debug(f"input: {_input}, output: {convert_name(_input, _list)}")
-
-
-if __name__ == "__main__":
-    # TEST
-    test_case()
